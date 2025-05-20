@@ -1,12 +1,26 @@
 ﻿using System.Text.Json;
 using Azure.Messaging.EventHubs;
 using Azure.Messaging.EventHubs.Producer;
+using Microsoft.ApplicationInsights;
 using Microsoft.Data.SqlClient;
 
 namespace CdcPublisher
 {
     public class PublishAdhCdc
     {
+        private readonly TelemetryClient _telemetryClient;
+        private readonly ApplicationInsightsLogger _logger;
+        public PublishAdhCdc()
+        {
+            // Initialize TelemetryClient with Application Insights connection string
+            var configuration = new Microsoft.ApplicationInsights.Extensibility.TelemetryConfiguration
+            {
+                ConnectionString = Environment.GetEnvironmentVariable("ApplicationInsightsConnectionString")
+            };
+            _telemetryClient = new TelemetryClient(configuration);
+            _logger = new ApplicationInsightsLogger(_telemetryClient);
+        }
+
         public async Task PublishCdcChanges(string sqlConnectionString, string eventHubConnectionString, CancellationToken cancellationToken)
         {
             await using var producer = new EventHubProducerClient(eventHubConnectionString, "StudentChangeEvents");
@@ -94,15 +108,33 @@ namespace CdcPublisher
                 {
                     // Log and alert on invalid LSN
                     Console.WriteLine($"Error: {ex.Message}");
-                    // Optionally notify admins (e.g., via Azure Monitor or email)
-                    await LogToApplicationInsights(ex.Message);
-                    // Stop processing to avoid data loss
-                    throw;
+                    // Log to Application Insights with table name and additional context
+                    await _logger.LogToApplicationInsights(
+                        message: ex.Message,
+                        tableName: "dbo.Student",
+                        additionalProperties: new Dictionary<string, string>
+                        {
+                        { "ErrorType", "InvalidLSN" },
+                        { "Timestamp", DateTime.UtcNow.ToString("o") }
+                        });
+
+                    // Optionally notify admins (e.g., via Azure Logic Apps or email)
+                    throw; // Re-throw to halt processing
                 }
                 catch (Exception ex)
                 {
                     // Handle other errors (e.g., transient failures)
                     Console.WriteLine($"Error: {ex.Message}");
+                    // Log other errors
+                    await _logger.LogToApplicationInsights(
+                        message: $"Unexpected error: {ex.Message}",
+                        tableName: "dbo.Student",
+                        additionalProperties: new Dictionary<string, string>
+                        {
+                        { "ErrorType", "General" },
+                        { "StackTrace", ex.StackTrace?.ToString() ?? "N/A" }
+                        });
+
                     // Consider retry logic with Polly
                 }
 
