@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "PublishCdcChanges": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
